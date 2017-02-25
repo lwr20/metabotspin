@@ -8,7 +8,6 @@
 var
   long  duty[4]
   long  period
-  long  minoff
   long  pwmstack1[12]                                           ' Stack size measured with Stack Length = 9 longs
   long  pwmstack2[12]
 
@@ -20,6 +19,7 @@ pub start_pwm(p1, p2, p3, p4, freq) | i
 pub set_duty(ch, level)
   level := 0 #> ||level <# 1000                                 ' limit duty cycle
   ch := 0 #> ch <# 3
+  duty[ch] := -period * level / 1000
 
 pub get_duty(ch)
   ch := 0 #> ch <# 3

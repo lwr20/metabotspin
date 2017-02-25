@@ -43,7 +43,7 @@ DAT
         
   motorPWM    byte 1, 2, 20, 21
   motorD1     byte 3, 0, 22, 19
-  motorD2     byte 4, 5, 23, 24
+' motorD2     byte 4, 5, 23, 24
 
 ' Pinger pins  
   trigPins      byte 6, 8
@@ -73,14 +73,14 @@ PUB main
   i2c.start(28,29,$42)                                ' (COG 2)
   quad.Start(@encoderPins)                            ' start the quadrature encoder reader (COG 3)
   resetMotors                                         ' reset the motors
-  pwm.start_pwm(motorPWM[0], motorPWM[1], motorPWM[2], motorPWM[3], 1000)    ' start the pwm driver (COGS 4 & 5)
+  pwm.start_pwm(motorPWM[0], motorPWM[1], motorPWM[2], motorPWM[3], 20000)    ' start the pwm driver (COGS 4 & 5)
   'cognew(pid, @pidstack)
   cognew(nopid,@pidstack)                             ' COG 6
   cognew(autoping, @pingstack)                        ' COG 7 (last one)
   
   ' Very weird if I add one more line to main it causes the ps prompt to get corrupted
   ' Line below is least necessary so commenting out
-  ' ps.puts(string("Propeller starting...", ps#CR))
+  ps.puts(string("Propeller starting...", ps#CR))
 
   repeat
     result := ps.prompt
@@ -94,7 +94,7 @@ PRI cmdHandler(cmdLine)
   cmdGetPos(ps.commandDef(string("+gp"), string("Get position") , cmdLine))
   cmdGetSpeed(ps.commandDef(string("+gs"), string("Get speed") , cmdLine))
   cmdGetTime(ps.commandDef(string("+gt"), string("Get time") , cmdLine))
-  cmdPing(ps.commandDef(string("+ping"), string("Ping") , cmdLine))
+  cmdPing(ps.commandDef(string("+p"), string("Ping") , cmdLine))
   cmdGetDebug(ps.commandDef(string("+gd"), string("Get debug") , cmdLine))
   ps.puts(string("? for help", ps#CR))  ' no command recognised
   return true
@@ -220,7 +220,7 @@ PRI cmdPing(forMe) | i
   ps.commandHandled
  
 PRI doPing(side) | m
-  'side := 0 <# side <# 1
+  side := 0 #> side <# 1
   m := ping.Millimetres(trigPins[side], echoPins[side]) / 3
   m <#= 255
   i2c.put(side+9, m)
@@ -245,10 +245,10 @@ PRI resetMotors | i
     error_integral[i] := 0
     outa[motorPWM[i]] := %0
     outa[motorD1[i]] := %0
-    outa[motorD2[i]] := %0
+'   outa[motorD2[i]] := %0
     dira[motorPWM[i]] := %1
     dira[motorD1[i]] := %1
-    dira[motorD2[i]] := %1
+'   dira[motorD2[i]] := %1
 {{
 PRI pid | i, nextpos, error, last_error, nexttime, newspeed, desired_speed
   nextpos := 0
@@ -284,6 +284,7 @@ PRI nopid | i, nextpos, error, last_error, nexttime, newspeed, desired_speed
     'Here once every 2 milliseconds
    
     repeat i from 0 to 3          ' loop takes just under 1ms to complete
+      lastpos[i] := quad.count(i)
       desired_speed := i2c.get(i*2)
       if i2c.get(i*2+1) > 0
         desired_speed := -desired_speed
@@ -293,13 +294,13 @@ PRI setMotorSpeed(motor, speed)
   pwm.set_duty(motor, speed)
   if speed == 0
     outa[motorD1[motor]] := %0
-    outa[motorD2[motor]] := %0
+'   outa[motorD2[motor]] := %0
   elseif speed > 0
     outa[motorD1[motor]] := %0
-    outa[motorD2[motor]] := %1
+'   outa[motorD2[motor]] := %1
   else
     outa[motorD1[motor]] := %1
-    outa[motorD2[motor]] := %0
+'   outa[motorD2[motor]] := %0
   
   
   
