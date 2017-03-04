@@ -5,13 +5,19 @@
 // Serial interface, see help messages below
 //
 // I2C interface : registers
-//      0 :     Target Motor 0 Speed 
-//      1 :     Target Motor 0 Direction
-//      2 -7 :  Speed and Direction for Motors 1-3
-//      8 :     AutoPing Rate (0 = off, 1 = continuous, other = not implemented)
-//      9 :     Left Ping distance (x3 for distance in millimetres)
-//      10:     Right Ping distance (ditto)
-//      11:     Front Ping distance (ditto)
+//      0 :     Motor 0 position (4 bytes)
+//      4 :     Motor 1 position (4 bytes)
+//      8 :     Motor 2 position (4 bytes)
+//      12 :    Motor 3 position (4 bytes)
+//      16 :    Left Ping distance in mm (2 bytes)
+//      18 :    Right Ping distance in mm (2 bytes)
+//      20 :    Front Ping distance in mm (2 bytes)
+//      22 :    Target Motor 0 Speed (1 byte) signed -127 - 127
+//      23 :    Target Motor 1 Speed (1 byte)
+//      24 :    Target Motor 2 Speed (1 byte)
+//      25 :    Target Motor 3 Speed (1 byte)
+//      26 :    Options (low bit = autoping on / off)
+//      27 :    Read Ready (master sets to 1 when ready to read, slave sets to zero when multi-byte values updated
 // 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 }}
@@ -20,6 +26,11 @@ CON
   _CLKMODE = xtal1 + pll16x
   _XINFREQ = 6_000_000
   debuglim = 8
+  posbase = 0
+  pingbase = 16
+  speedbase = 22
+  options = 26
+  readready = 27
 
 OBJ
   ps : "propshell"
@@ -30,28 +41,31 @@ OBJ
 
 DAT
 ' Encoder wire colours : grey, yellow
-  encoderPins byte 11, 12, 13, 14, 15, 16, 17, 18
+  encoderPins byte 18, 17, 15, 16, 13, 14, 12, 11
   
 ' Motor wire colours : 
 '                Prop    Controller
-'        red     24, 5   9   INB2
-'        black   23, 4   8   INB1
 '        grey    22, 3   7   INA1
 '        yellow  21, 2   6   PWM2
 '        purple  20, 1   5   PWM1
 '        green   19, 0   4   INA2
-        
+
+' Spares
+'         grey   25
+'         blue   26
+'         green  27
+
   motorPWM    byte 1, 2, 20, 21
   motorD1     byte 3, 0, 22, 19
-' motorD2     byte 4, 5, 23, 24
 
 ' Pinger pins  
-  trigPins      byte 6, 8
-  echoPins      byte 7, 9
+  trigPins      byte 6, 8, 24   ' yellow
+  echoPins      byte 7, 9, 23   ' purple
 
 VAR
   long  pidstack[30]
   long  pingstack[30]
+  word  pingval[3]
   long  lastpos[4]
   long  debug[debuglim]
   long  actual_speed[4]
@@ -59,9 +73,10 @@ VAR
   long  error_derivative[4]
   long  millidiv
   long  millioffset
-  long Kp
-  long Ki
-  long Kd
+  long  Kp
+  long  Ki
+  long  Kd
+  byte  b
   
 PUB main
   millidiv := clkfreq / 1000
@@ -74,17 +89,19 @@ PUB main
   quad.Start(@encoderPins)                            ' start the quadrature encoder reader (COG 3)
   resetMotors                                         ' reset the motors
   pwm.start_pwm(motorPWM[0], motorPWM[1], motorPWM[2], motorPWM[3], 20000)    ' start the pwm driver (COGS 4 & 5)
-  'cognew(pid, @pidstack)
-  cognew(nopid,@pidstack)                             ' COG 6
+  cognew(pid, @pidstack)                              ' COG 6
   cognew(autoping, @pingstack)                        ' COG 7 (last one)
   
   ' Very weird if I add one more line to main it causes the ps prompt to get corrupted
   ' Line below is least necessary so commenting out
-  ps.puts(string("Propeller starting...", ps#CR))
+  ' ps.puts(string("Propeller starting...", ps#CR))
 
   repeat
-    result := ps.prompt
-    \cmdHandler(result)
+    update
+    waitcnt(millidiv + cnt)
+  
+  '  result := ps.prompt
+  '  \cmdHandler(result)
 
 PRI cmdHandler(cmdLine)
   cmdSetSpeed(ps.commandDef(string("+ss"), string("Set speed <motor[0..3], speed[-100...100]>") , cmdLine))
@@ -107,11 +124,7 @@ PRI cmdSetSpeedAll(forMe) | motor, newspeed
     newspeed := ps.currentParDec
     ps.putd(newspeed)
     ps.puts(string(" "))
-    i2c.put(motor*2, ||newspeed)
-    if newspeed > 0
-      i2c.put(motor*2+1, 0)
-    else
-      i2c.put(motor*2+1, 1)
+    i2c.put(speedbase + motor, newspeed)
   ps.puts(string(ps#CR))
   ps.commandHandled
   
@@ -130,11 +143,7 @@ PRI cmdSetSpeed(forMe) | motor, newspeed
   ps.puts(string(", "))
   ps.putd(newspeed)
   ps.puts(string(ps#CR))
-  i2c.put(motor*2, ||newspeed)
-  if newspeed > 0
-    i2c.put(motor*2+1, 0)
-  else
-    i2c.put(motor*2+1, 1)
+  i2c.put(speedbase + motor, newspeed)
   ps.commandHandled
 
 PRI cmdSetStop(forMe)
@@ -208,99 +217,82 @@ PRI cmdGetDebug(forMe) | i
 PRI cmdPing(forMe) | i
   if not forMe
     return
-  if i2c.get(8) == 0         ' if autopinger not running do one manually
+  if i2c.get(options) == 0         ' if autopinger not running do one manually
     doPing(0)
     doPing(1)
   ps.puts(string("Ping: "))
-  ps.putd(i2c.get(9) * 3)
+  ps.putd(pingval[0])
   ps.puts(string(" mm, "))
-  ps.putd(i2c.get(10) * 3)
+  ps.putd(pingval[1])
   ps.puts(string(" mm"))
   ps.puts(string(ps#CR))
   ps.commandHandled
  
 PRI doPing(side) | m
-  side := 0 #> side <# 1
-  m := ping.Millimetres(trigPins[side], echoPins[side]) / 3
-  m <#= 255
-  i2c.put(side+9, m)
+  side := 0 #> side <# 2
+  pingval[side] := ping.Millimetres(trigPins[side], echoPins[side])
  
-PRI autoPing | nexttime
-  i2c.put(8, 0)                                       ' auto-pinger turned off
-  i2c.put(9, 0)                                       ' zero ping results
-  i2c.put(10, 0)                                      
-  i2c.put(11, 0)                                      
-  nexttime := millidiv + cnt
+PRI autoPing | i
+  i2c.put(options, 0)                                 ' auto-pinger turned off
+  i2c.putw(pingbase, 0)                               ' zero ping results
+  i2c.put(pingbase+2, 0)                                
+  i2c.put(pingbase+4, 0)                                      
   repeat
-    waitcnt(nexttime)
-    nexttime += millidiv * 100
-    if i2c.get(8) > 0                   ' autopinger is enabled
-      i2c.put(9, i2c.get(9) + 1)        ' test !
-      i2c.put(10, i2c.get(10) - 1)      ' test
+    ' Do autoping
+    if i2c.get(options) > 0                   ' autopinger is enabled
+      repeat i from 0 to 2
+        doPing(i)
+ 
+PRI update | i
+  ' If host is ready to read then write ping and position values
+  if i2c.get(readready) == 1
+    repeat i from 0 to 2
+      i2c.putw(pingbase+i*2, pingval[i])
+    repeat i from 0 to 3  
+      i2c.putl(posbase+i*4, lastpos[i])
+    i2c.put(readready, 0)                   ' reset ready for the next read
  
 PRI resetMotors | i
   repeat i from 0 to 3
-    i2c.put(i*2,0)
-    i2c.put(i*2+1,0)
+    i2c.put(speedbase+i,0)
     error_integral[i] := 0
     outa[motorPWM[i]] := %0
     outa[motorD1[i]] := %0
-'   outa[motorD2[i]] := %0
     dira[motorPWM[i]] := %1
     dira[motorD1[i]] := %1
-'   dira[motorD2[i]] := %1
-{{
+
 PRI pid | i, nextpos, error, last_error, nexttime, newspeed, desired_speed
   nextpos := 0
   resetMotors    ' enables the direction ports control from this cog
   nexttime := millidiv + cnt
   repeat
     waitcnt(nexttime)
-    nexttime += millidiv * 2
-    'Here once every 2 milliseconds
+    nexttime += millidiv * 15
+    'Here once every 15 milliseconds
    
     repeat i from 0 to 3          ' loop takes just under 1ms to complete
-      desired_speed := i2c.get(i*2)
-      if i2c.get(i*2+1) > 0
-        desired_speed := -desired_speed
-      debug[i] := desired_speed  
+      b := i2c.get(speedbase+i)   
+      desired_speed := ~b         ' note sneaky '~' that sign extends the byte value
       nextpos := quad.count(i)
       last_error := desired_speed - actual_speed[i] 
       actual_speed[i] := nextpos - lastpos[i]
       lastpos[i] := nextpos
       error := desired_speed - actual_speed[i] 
       error_derivative[i] := error - last_error
-      error_integral[i] += error
+      if desired_speed == 0
+        error_integral[i] := 0    ' stop integral wind-up when stopped
+      else
+        error_integral[i] += error
       newspeed := Kp * error + Ki * error_integral[i] + Kd * error_derivative[i]
       setMotorSpeed(i, newspeed)
-}}
-PRI nopid | i, nextpos, error, last_error, nexttime, newspeed, desired_speed
-  nextpos := 0
-  resetMotors    ' enables the direction ports control from this cog
-  nexttime := millidiv + cnt
-  repeat
-    waitcnt(nexttime)
-    nexttime += millidiv * 2
-    'Here once every 2 milliseconds
-   
-    repeat i from 0 to 3          ' loop takes just under 1ms to complete
-      lastpos[i] := quad.count(i)
-      desired_speed := i2c.get(i*2)
-      if i2c.get(i*2+1) > 0
-        desired_speed := -desired_speed
-      setMotorSpeed(i, desired_speed*10)
       
 PRI setMotorSpeed(motor, speed)
   pwm.set_duty(motor, speed)
+  
   if speed == 0
     outa[motorD1[motor]] := %0
-'   outa[motorD2[motor]] := %0
   elseif speed > 0
     outa[motorD1[motor]] := %0
-'   outa[motorD2[motor]] := %1
   else
     outa[motorD1[motor]] := %1
-'   outa[motorD2[motor]] := %0
-  
-  
   

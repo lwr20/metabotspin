@@ -19,7 +19,7 @@ pub start_pwm(p1, p2, p3, p4, freq) | i
 pub set_duty(ch, level)
   level := 0 #> ||level <# 1000                                 ' limit duty cycle
   ch := 0 #> ch <# 3
-  duty[ch] := -period * level / 1000
+  duty[ch] := -period * level / 1100
 
 pub get_duty(ch)
   ch := 0 #> ch <# 3
