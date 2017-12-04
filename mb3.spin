@@ -47,7 +47,7 @@ OBJ
 
 DAT
 ' Encoder wire colours : grey, yellow
-  encoderPins byte 18, 17, 15, 16, 13, 14, 12, 11
+  encoderPins byte 0, 1, 10, 11, 26, 27, 15, 16
   
 ' Motor wire colours : 
 '                Prop    Controller
@@ -61,14 +61,14 @@ DAT
 '         blue   26
 '         green  27
 
-  motorPWM    byte 1, 2, 20, 21
-  motorD1     byte 3, 0, 22, 19
+  motorPWM    byte 2, 12, 28, 17
+  motorD1     byte 3, 13, 29, 18
 
 ' Pinger pins  
-  trigPins      byte 6, 8, 24   ' yellow
-  echoPins      byte 7, 9, 23   ' purple
+  trigPins      byte 4, 6, 8   ' yellow
+  echoPins      byte 5, 7, 9   ' purple
   
-' Servo Pins - 25, 26, 27  
+' Servo Pins - 19, 20, 21  
 
 VAR
   long  pidstack[80]
