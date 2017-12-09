@@ -85,6 +85,9 @@ VAR
   long  Ki
   long  Kd
   byte  b
+  long  timeout
+  long  lastping
+  long  pingcog
   
   ' vars for servo program      
   long  position1, position2, position3    'The assembly program will read these variables from the main Hub RAM to determine
@@ -95,6 +98,8 @@ PUB main
   Kp := 20
   Ki := 2
   Kd := 10
+  timeout := 100
+  lastping := cnt
 
   ' Start Servos
   p1:=@position1                           'Stores the address of the "position1" variable in the main Hub RAM as "p1"
@@ -108,14 +113,19 @@ PUB main
   resetMotors                                         ' reset the motors
   pwm.start_pwm(motorPWM[0], motorPWM[1], motorPWM[2], motorPWM[3], 20000)    ' start the pwm driver (COGS 4 & 5)
   cognew(pid, @pidstack)                              ' COG 6
-  cognew(autoping, @pingstack)                        ' COG 7 (last one)
+  pingcog := cognew(autoping, @pingstack)              ' COG 7 (last one)
   repeat
     update
     waitcnt(millidiv + cnt)
+    ' check pinger timeout and restart cog if it has fired
+    'if (cnt - lastping)  >  ((clkfreq / millidiv) * 100)
+    '  coginit(pingcog, autoping, @pingstack)
 
 PRI update | i
   ' If host is ready to read then write ping and position values
-  if i2c.get(readready) == 1
+  timeout := timeout + 1
+  if timeout > 100 or i2c.get(readready) > 0
+    timeout := 0
     repeat i from 0 to 2
       i2c.putw(pingbase+i*2, pingval[i])
     repeat i from 0 to 3  
@@ -136,12 +146,13 @@ PRI doPing(side) | m
   pingval[side] := ping.Millimetres(trigPins[side], echoPins[side])
  
 PRI autoPing | i
-  i2c.put(options, 0)                                 ' auto-pinger turned off
+  i2c.put(options, 1)                                 ' auto-pinger turned on
   i2c.putw(pingbase, 0)                               ' zero ping results
   i2c.putw(pingbase+2, 0)                                
   i2c.putw(pingbase+4, 0)                                      
   repeat
     ' Do autoping
+    lastping := cnt
     if i2c.get(options) > 0                   ' autopinger is enabled
       doPing(0)
       doPing(1)
@@ -178,10 +189,11 @@ PRI pid | i, nextpos, error, last_error, nexttime, newspeed, desired_speed, maxi
       error_integral[i] += error
       error_integral[i] := -maxintegral #> error_integral[i] <# maxintegral
       newspeed := Kp * error + Ki * error_integral[i] + Kd * error_derivative[i]
+      
       setMotorSpeed(i, newspeed)
       
     ' Update servo parameters  
-    position1 := ((i2c.get(servo0hi) << 8) + i2c.get(servo0lo)) * 2 + 45_000
+    position1 := ((i2c.get(servo0hi) << 8) + i2c.get(servo0lo)) * 2 + 90_000
     position2 := (i2c.get(servo1) * 550) + 40_000
     position3 := (i2c.get(servo2) * 550) + 40_000
       
